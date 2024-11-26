@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -35,6 +36,22 @@ func TestNeedsDedup(t *testing.T) {
 	f(10, []int64{0, 31, 49}, false)
 }
 
+func compareWithNaNs(a, b []float64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if math.IsNaN(v) {
+			if !math.IsNaN(b[i]) {
+				return false
+			}
+		} else if v != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDeduplicateSamplesWithIdenticalTimestamps(t *testing.T) {
 	f := func(scrapeInterval time.Duration, timestamps []int64, values []float64, timestampsExpected []int64, valuesExpected []float64) {
 		t.Helper()
@@ -45,7 +62,7 @@ func TestDeduplicateSamplesWithIdenticalTimestamps(t *testing.T) {
 		if !reflect.DeepEqual(timestampsCopy, timestampsExpected) {
 			t.Fatalf("invalid DeduplicateSamples(%v) timestamps;\ngot\n%v\nwant\n%v", timestamps, timestampsCopy, timestampsExpected)
 		}
-		if !reflect.DeepEqual(values, valuesExpected) {
+		if !compareWithNaNs(values, valuesExpected) {
 			t.Fatalf("invalid DeduplicateSamples(%v) values;\ngot\n%v\nwant\n%v", timestamps, values, valuesExpected)
 		}
 
@@ -55,13 +72,15 @@ func TestDeduplicateSamplesWithIdenticalTimestamps(t *testing.T) {
 		if !reflect.DeepEqual(timestampsCopy, timestampsExpected) {
 			t.Fatalf("invalid DeduplicateSamples(%v) timestamps for the second call;\ngot\n%v\nwant\n%v", timestamps, timestampsCopy, timestampsExpected)
 		}
-		if !reflect.DeepEqual(valuesCopy, values) {
+		if !compareWithNaNs(valuesCopy, values) {
 			t.Fatalf("invalid DeduplicateSamples(%v) values for the second call;\ngot\n%v\nwant\n%v", timestamps, values, valuesCopy)
 		}
 	}
 	f(time.Second, []int64{1000, 1000}, []float64{2, 1}, []int64{1000}, []float64{2})
 	f(time.Second, []int64{1001, 1001}, []float64{2, 1}, []int64{1001}, []float64{2})
 	f(time.Second, []int64{1000, 1001, 1001, 1001, 2001}, []float64{1, 2, 5, 3, 0}, []int64{1000, 1001, 2001}, []float64{1, 5, 0})
+	f(time.Second, []int64{1000, 2000, 2000}, []float64{1, 2, math.NaN()}, []int64{1000, 2000}, []float64{1, math.NaN()})
+	f(time.Second, []int64{1000, 2000, 2000}, []float64{1, math.NaN(), 2}, []int64{1000, 2000}, []float64{1, math.NaN()})
 }
 
 func TestDeduplicateSamplesDuringMergeWithIdenticalTimestamps(t *testing.T) {
