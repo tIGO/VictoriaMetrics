@@ -154,7 +154,7 @@ type indexDB struct {
 	// without lock, lock only in slow path, see other caches, such as
 	// dateMetricIDCache)
 	metricIDCache     map[uint64]struct{}
-	metricIDCacheLock sync.RWMutex
+	metricIDCacheLock sync.Mutex
 
 	// An inmemory set of deleted metricIDs.
 	//
@@ -2823,9 +2823,9 @@ func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 }
 
 func (db *indexDB) hasMetricID(metricID uint64) bool {
-	db.metricIDCacheLock.RLock()
+	db.metricIDCacheLock.Lock()
 	_, ok := db.metricIDCache[metricID]
-	db.metricIDCacheLock.RUnlock()
+	db.metricIDCacheLock.Unlock()
 	if ok {
 		return true
 	}
