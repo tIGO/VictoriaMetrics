@@ -2858,16 +2858,6 @@ func (db *indexDB) hasMetricID(metricID uint64) bool {
 		return true
 	}
 
-	db.metricIDCacheNextLock.RLock()
-	_, ok = db.metricIDCacheNext[metricID]
-	db.metricIDCacheNextLock.RUnlock()
-	if ok {
-		db.metricIDCacheLock.Lock()
-		db.metricIDCache[metricID] = struct{}{}
-		db.metricIDCacheLock.Unlock()
-		return true
-	}
-
 	is := db.getIndexSearch(noDeadline)
 	defer db.putIndexSearch(is)
 
