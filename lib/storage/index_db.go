@@ -153,10 +153,10 @@ type indexDB struct {
 	// minutes. Use Mutex instead RWMutex or even get rid of mutex (fast path
 	// without lock, lock only in slow path, see other caches, such as
 	// dateMetricIDCache)
-	metricIDCache     map[uint64]struct{}
+	metricIDCache     *uint64set.Set
 	metricIDCacheLock sync.RWMutex
 
-	metricIDCacheNext     map[uint64]struct{}
+	metricIDCacheNext     *uint64set.Set
 	metricIDCacheNextLock sync.RWMutex
 
 	// An inmemory set of deleted metricIDs.
@@ -210,8 +210,8 @@ func mustOpenIndexDB(id uint64, tr TimeRange, name, path string, s *Storage, isR
 		tagFiltersToMetricIDsCache: workingsetcache.New(tagFiltersCacheSize),
 		s:                          s,
 		loopsPerDateTagFilterCache: workingsetcache.New(mem / 128),
-		metricIDCache:              make(map[uint64]struct{}),
-		metricIDCacheNext:          make(map[uint64]struct{}),
+		metricIDCache:              &uint64set.Set{},
+		metricIDCacheNext:          &uint64set.Set{},
 		prefetchedMetricIDs:        &uint64set.Set{},
 		stopCh:                     make(chan struct{}),
 	}
@@ -568,7 +568,7 @@ func generateTSID(dst *TSID, mn *MetricName) {
 func (is *indexSearch) createGlobalIndexes(tsid *TSID, mn *MetricName) {
 	// Add new metricID to cache.
 	is.db.metricIDCacheNextLock.Lock()
-	is.db.metricIDCacheNext[tsid.MetricID] = struct{}{}
+	is.db.metricIDCacheNext.Add(tsid.MetricID)
 	is.db.metricIDCacheNextLock.Unlock()
 
 	ii := getIndexItems()
@@ -2852,9 +2852,19 @@ func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 
 func (db *indexDB) hasMetricID(metricID uint64) bool {
 	db.metricIDCacheLock.RLock()
-	_, ok := db.metricIDCache[metricID]
+	ok := db.metricIDCache.Has(metricID)
 	db.metricIDCacheLock.RUnlock()
 	if ok {
+		return true
+	}
+
+	db.metricIDCacheNextLock.RLock()
+	ok = db.metricIDCacheNext.Has(metricID)
+	db.metricIDCacheNextLock.RUnlock()
+	if ok {
+		db.metricIDCacheLock.Lock()
+		db.metricIDCache.Add(metricID)
+		db.metricIDCacheLock.Unlock()
 		return true
 	}
 
@@ -2873,7 +2883,7 @@ func (db *indexDB) hasMetricID(metricID uint64) bool {
 	}
 
 	db.metricIDCacheNextLock.Lock()
-	db.metricIDCacheNext[metricID] = struct{}{}
+	db.metricIDCacheNext.Add(metricID)
 	db.metricIDCacheNextLock.Unlock()
 
 	return true
