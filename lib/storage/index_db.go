@@ -2800,7 +2800,7 @@ func reverseBytes(dst, src []byte) []byte {
 
 func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 	if date == globalIndexDate {
-		return is.hasMetricID(metricID)
+		return is.db.hasMetricID(metricID)
 	}
 
 	ts := &is.ts
@@ -2822,13 +2822,16 @@ func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 	return false
 }
 
-func (is *indexSearch) hasMetricID(metricID uint64) bool {
-	is.db.metricIDCacheLock.RLock()
-	_, ok := is.db.metricIDCache[metricID]
-	is.db.metricIDCacheLock.RUnlock()
+func (db *indexDB) hasMetricID(metricID uint64) bool {
+	db.metricIDCacheLock.RLock()
+	_, ok := db.metricIDCache[metricID]
+	db.metricIDCacheLock.RUnlock()
 	if ok {
 		return true
 	}
+
+	is := db.getIndexSearch(noDeadline)
+	defer db.putIndexSearch(is)
 
 	ts := &is.ts
 	kb := &is.kb
@@ -2841,9 +2844,9 @@ func (is *indexSearch) hasMetricID(metricID uint64) bool {
 		logger.Panicf("FATAL: error when searching for metricID=%d; searchPrefix %q: %s", metricID, kb.B, err)
 	}
 
-	is.db.metricIDCacheLock.Lock()
-	is.db.metricIDCache[metricID] = struct{}{}
-	is.db.metricIDCacheLock.Unlock()
+	db.metricIDCacheLock.Lock()
+	db.metricIDCache[metricID] = struct{}{}
+	db.metricIDCacheLock.Unlock()
 
 	return true
 }
