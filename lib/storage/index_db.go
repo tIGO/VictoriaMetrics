@@ -154,7 +154,10 @@ type indexDB struct {
 	// without lock, lock only in slow path, see other caches, such as
 	// dateMetricIDCache)
 	metricIDCache     map[uint64]struct{}
-	metricIDCacheLock sync.Mutex
+	metricIDCacheLock sync.RWMutex
+
+	metricIDCacheNext     map[uint64]struct{}
+	metricIDCacheNextLock sync.RWMutex
 
 	// An inmemory set of deleted metricIDs.
 	//
@@ -171,6 +174,8 @@ type indexDB struct {
 
 	// prefetchedMetricIDsDeadline is used for periodic reset of prefetchedMetricIDs in order to limit its size under high rate of creating new series.
 	prefetchedMetricIDsDeadline atomic.Uint64
+
+	stopCh chan struct{}
 }
 
 var maxTagFiltersCacheSize int
@@ -206,12 +211,15 @@ func mustOpenIndexDB(id uint64, tr TimeRange, name, path string, s *Storage, isR
 		s:                          s,
 		loopsPerDateTagFilterCache: workingsetcache.New(mem / 128),
 		metricIDCache:              make(map[uint64]struct{}),
+		metricIDCacheNext:          make(map[uint64]struct{}),
 		prefetchedMetricIDs:        &uint64set.Set{},
+		stopCh:                     make(chan struct{}),
 	}
 	tb := mergeset.MustOpenTable(path, dataFlushInterval, db.invalidateTagFiltersCache, mergeTagToMetricIDsRows, isReadOnly)
 	db.tb = tb
 	db.incRef()
 	db.loadDeletedMetricIDs()
+	db.startMetricIDCacheRotation()
 
 	return db
 }
@@ -254,6 +262,25 @@ type IndexDBMetrics struct {
 	CompositeFilterMissingConversions uint64
 
 	mergeset.TableMetrics
+}
+
+func (db *indexDB) startMetricIDCacheRotation() {
+	go func() {
+		timer := time.NewTimer(1 * time.Minute)
+		defer timer.Stop()
+		for {
+			select {
+			case <-db.stopCh:
+				return
+			case <-timer.C:
+				db.metricIDCacheLock.Lock()
+				db.metricIDCacheNextLock.Lock()
+				db.metricIDCache, db.metricIDCacheNext = db.metricIDCacheNext, db.metricIDCache
+				db.metricIDCacheNextLock.Unlock()
+				db.metricIDCacheLock.Unlock()
+			}
+		}
+	}()
 }
 
 func (db *indexDB) scheduleToDrop() {
@@ -307,6 +334,7 @@ func (db *indexDB) UpdateMetrics(m *IndexDBMetrics) {
 
 // MustClose closes db.
 func (db *indexDB) MustClose() {
+	close(db.stopCh)
 	db.decRef()
 }
 
@@ -539,9 +567,9 @@ func generateTSID(dst *TSID, mn *MetricName) {
 
 func (is *indexSearch) createGlobalIndexes(tsid *TSID, mn *MetricName) {
 	// Add new metricID to cache.
-	is.db.metricIDCacheLock.Lock()
-	is.db.metricIDCache[tsid.MetricID] = struct{}{}
-	is.db.metricIDCacheLock.Unlock()
+	is.db.metricIDCacheNextLock.Lock()
+	is.db.metricIDCacheNext[tsid.MetricID] = struct{}{}
+	is.db.metricIDCacheNextLock.Unlock()
 
 	ii := getIndexItems()
 	defer putIndexItems(ii)
@@ -2823,10 +2851,20 @@ func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 }
 
 func (db *indexDB) hasMetricID(metricID uint64) bool {
-	db.metricIDCacheLock.Lock()
+	db.metricIDCacheLock.RLock()
 	_, ok := db.metricIDCache[metricID]
-	db.metricIDCacheLock.Unlock()
+	db.metricIDCacheLock.RUnlock()
 	if ok {
+		return true
+	}
+
+	db.metricIDCacheNextLock.RLock()
+	_, ok = db.metricIDCacheNext[metricID]
+	db.metricIDCacheNextLock.RUnlock()
+	if ok {
+		db.metricIDCacheLock.Lock()
+		db.metricIDCache[metricID] = struct{}{}
+		db.metricIDCacheLock.Unlock()
 		return true
 	}
 
@@ -2844,9 +2882,9 @@ func (db *indexDB) hasMetricID(metricID uint64) bool {
 		logger.Panicf("FATAL: error when searching for metricID=%d; searchPrefix %q: %s", metricID, kb.B, err)
 	}
 
-	db.metricIDCacheLock.Lock()
-	db.metricIDCache[metricID] = struct{}{}
-	db.metricIDCacheLock.Unlock()
+	db.metricIDCacheNextLock.Lock()
+	db.metricIDCacheNext[metricID] = struct{}{}
+	db.metricIDCacheNextLock.Unlock()
 
 	return true
 }
