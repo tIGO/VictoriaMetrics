@@ -2577,23 +2577,6 @@ func newDateMetricIDCache() *dateMetricIDCache {
 	return &dmc
 }
 
-func (dmc *dateMetricIDCache) CloneCurrentDay() *dateMetricIDCache {
-	var dmcNew dateMetricIDCache
-	dmcNew.resetLocked()
-	currentDay := fasttime.UnixDate()
-	byDate := dmc.byDate.Load()
-	currentDaySnapshot := newByDateMetricIDMap()
-	for k, e := range byDate.m {
-		if k.date != currentDay {
-			continue
-		}
-		currentDaySnapshot.getOrCreate(k.idbID, globalIndexDate).Union(&e.v)
-	}
-
-	dmcNew.byDate.Store(currentDaySnapshot)
-	return &dmcNew
-}
-
 func (dmc *dateMetricIDCache) resetLocked() {
 	// Do not reset syncsCount and resetsCount
 	dmc.byDate.Store(newByDateMetricIDMap())

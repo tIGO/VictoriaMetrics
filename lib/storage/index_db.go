@@ -215,10 +215,6 @@ func mustOpenIndexDB(id uint64, tr TimeRange, name, path string, s *Storage, isR
 	db.incRef()
 	db.loadDeletedMetricIDs()
 
-	if s != nil && s.dateMetricIDCache != nil {
-		db.metricIDCache = s.dateMetricIDCache.CloneCurrentDay()
-		logger.Infof("Init metricIDCache %d", db.metricIDCache.EntriesCount())
-	}
 	return db
 }
 
