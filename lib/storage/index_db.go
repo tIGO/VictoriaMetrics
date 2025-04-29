@@ -215,6 +215,10 @@ func mustOpenIndexDB(id uint64, tr TimeRange, name, path string, s *Storage, isR
 	db.incRef()
 	db.loadDeletedMetricIDs()
 
+	if s != nil && s.dateMetricIDCache != nil {
+		db.metricIDCache = s.dateMetricIDCache.CloneCurrentDay()
+		logger.Infof("Init metricIDCache %d", db.metricIDCache.EntriesCount())
+	}
 	return db
 }
 
@@ -542,7 +546,7 @@ func generateTSID(dst *TSID, mn *MetricName) {
 
 func (is *indexSearch) createGlobalIndexes(tsid *TSID, mn *MetricName) {
 	// Add new metricID to cache.
-	is.db.metricIDCache.Set(0, 0, tsid.MetricID)
+	is.db.metricIDCache.Set(is.db.id, globalIndexDate, tsid.MetricID)
 
 	ii := getIndexItems()
 	defer putIndexItems(ii)
@@ -2824,7 +2828,7 @@ func (is *indexSearch) hasDateMetricID(date, metricID uint64) bool {
 }
 
 func (db *indexDB) hasMetricID(metricID uint64) bool {
-	ok := db.metricIDCache.Has(0, 0, metricID)
+	ok := db.metricIDCache.Has(db.id, globalIndexDate, metricID)
 	if ok {
 		return true
 	}
@@ -2843,7 +2847,7 @@ func (db *indexDB) hasMetricID(metricID uint64) bool {
 		logger.Panicf("FATAL: error when searching for metricID=%d; searchPrefix %q: %s", metricID, kb.B, err)
 	}
 
-	db.metricIDCache.Set(0, 0, metricID)
+	db.metricIDCache.Set(db.id, globalIndexDate, metricID)
 
 	return true
 }
