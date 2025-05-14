@@ -33,6 +33,7 @@ type table struct {
 	// TODO(@rtm0): Do not depend on Storage.
 	s *Storage
 
+	hotIdb   atomic.Pointer[indexDB]
 	ptws     []*partitionWrapper
 	ptwsLock sync.Mutex
 
@@ -207,6 +208,7 @@ func (tb *table) MustClose() {
 	tb.ptwsLock.Lock()
 	ptws := tb.ptws
 	tb.ptws = nil
+	tb.hotIdb.Store(nil)
 	tb.ptwsLock.Unlock()
 
 	for _, ptw := range ptws {
@@ -406,6 +408,14 @@ func (tb *table) MustAddRows(rows []rawRow) {
 // The function increments the ref counter for the found indexDB and the
 // partition it belongs to.
 func (tb *table) MustGetIndexDB(timestamp int64) *indexDB {
+	hotIdb := tb.hotIdb.Load()
+	if hotIdb != nil && hotIdb.HasTimestamp(timestamp) {
+		// Fast path
+		hotIdb.ptw.incRef()
+		hotIdb.incRef()
+		return hotIdb
+	}
+
 	tb.ptwsLock.Lock()
 	defer tb.ptwsLock.Unlock()
 
@@ -424,6 +434,7 @@ func (tb *table) MustGetIndexDB(timestamp int64) *indexDB {
 		idb = pt.idb
 	}
 
+	tb.hotIdb.Store(idb)
 	idb.ptw.incRef()
 	idb.incRef()
 
