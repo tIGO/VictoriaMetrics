@@ -146,7 +146,7 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 		if !checkItemsSorted(data, itemsB) {
 			t.Fatalf("source items aren't sorted; items:\n%q", itemsB)
 		}
-		resultData, resultItemsB := mergeTagToMetricIDsRows(data, itemsB)
+		resultData, resultItemsB := mergeTagToMetricIDsRows(data, itemsB, nil)
 		if len(resultItemsB) != len(expectedItems) {
 			t.Fatalf("unexpected len(resultItemsB); got %d; want %d", len(resultItemsB), len(expectedItems))
 		}

@@ -291,7 +291,15 @@ func mustOpenIndexDB(id uint64, tr TimeRange, name, path string, s *Storage, isR
 		metricIDCache:                  newMetricIDCache(),
 		prefetchedMetricIDs:            &uint64set.Set{},
 	}
-	db.tb = mergeset.MustOpenTable(path, dataFlushInterval, db.invalidateTagFiltersCache, mergeTagToMetricIDsRows, isReadOnly)
+
+	prepareBlock := func(data []byte, items []mergeset.Item) ([]byte, []mergeset.Item) {
+		deletedMetricIDs := db.getDeletedMetricIDs()
+		data, items = removeDeletedIndexEntries(data, items, deletedMetricIDs)
+		data, items = mergeTagToMetricIDsRows(data, items, deletedMetricIDs)
+		return data, items
+	}
+
+	db.tb = mergeset.MustOpenTable(path, dataFlushInterval, db.invalidateTagFiltersCache, prepareBlock, isReadOnly)
 	db.incRef()
 	db.loadDeletedMetricIDs()
 
@@ -3656,13 +3664,13 @@ func (mp *tagToMetricIDsRowParser) GetMatchingSeriesCount(filter, negativeFilter
 	return n
 }
 
-func mergeTagToMetricIDsRows(data []byte, items []mergeset.Item) ([]byte, []mergeset.Item) {
-	data, items = mergeTagToMetricIDsRowsInternal(data, items, nsPrefixTagToMetricIDs)
-	data, items = mergeTagToMetricIDsRowsInternal(data, items, nsPrefixDateTagToMetricIDs)
+func mergeTagToMetricIDsRows(data []byte, items []mergeset.Item, deletedMetricIDs *uint64set.Set) ([]byte, []mergeset.Item) {
+	data, items = mergeTagToMetricIDsRowsInternal(data, items, nsPrefixTagToMetricIDs, deletedMetricIDs)
+	data, items = mergeTagToMetricIDsRowsInternal(data, items, nsPrefixDateTagToMetricIDs, deletedMetricIDs)
 	return data, items
 }
 
-func mergeTagToMetricIDsRowsInternal(data []byte, items []mergeset.Item, nsPrefix byte) ([]byte, []mergeset.Item) {
+func mergeTagToMetricIDsRowsInternal(data []byte, items []mergeset.Item, nsPrefix byte, deletedMetricIDs *uint64set.Set) ([]byte, []mergeset.Item) {
 	// Perform quick checks whether items contain rows starting from nsPrefix
 	// based on the fact that items are sorted.
 	if len(items) <= 2 {
@@ -3703,7 +3711,7 @@ func mergeTagToMetricIDsRowsInternal(data []byte, items []mergeset.Item, nsPrefi
 		if err := mp.Init(item, nsPrefix); err != nil {
 			logger.Panicf("FATAL: cannot parse row starting with nsPrefix %d during merge: %s", nsPrefix, err)
 		}
-		if mp.MetricIDsLen() >= maxMetricIDsPerRow {
+		if deletedMetricIDs.Len() == 0 && mp.MetricIDsLen() >= maxMetricIDsPerRow {
 			dstData, dstItems = tmm.flushPendingMetricIDs(dstData, dstItems, mpPrev)
 			dstData = append(dstData, item...)
 			dstItems = append(dstItems, mergeset.Item{
@@ -3716,7 +3724,11 @@ func mergeTagToMetricIDsRowsInternal(data []byte, items []mergeset.Item, nsPrefi
 			dstData, dstItems = tmm.flushPendingMetricIDs(dstData, dstItems, mpPrev)
 		}
 		mp.ParseMetricIDs()
-		tmm.pendingMetricIDs = append(tmm.pendingMetricIDs, mp.MetricIDs...)
+		for i := range mp.MetricIDs {
+			if !deletedMetricIDs.Has(mp.MetricIDs[i]) {
+				tmm.pendingMetricIDs = append(tmm.pendingMetricIDs, mp.MetricIDs[i])
+			}
+		}
 		mpPrev, mp = mp, mpPrev
 		if len(tmm.pendingMetricIDs) >= maxMetricIDsPerRow {
 			dstData, dstItems = tmm.flushPendingMetricIDs(dstData, dstItems, mpPrev)

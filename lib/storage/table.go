@@ -55,6 +55,14 @@ type partitionWrapper struct {
 	pt *partition
 }
 
+func (ptw *partitionWrapper) Partition() *partition {
+	return ptw.pt
+}
+
+func (ptw *partitionWrapper) Name() string {
+	return ptw.pt.name
+}
+
 func (ptw *partitionWrapper) incRef() {
 	ptw.refCount.Add(1)
 }

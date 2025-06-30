@@ -125,7 +125,7 @@ again:
 
 	if len(bsm.bsrHeap) == 0 {
 		// Write the last (maybe incomplete) inmemoryBlock to bsw.
-		bsm.flushIB(bsw, ph, &localItemsMerged)
+		bsm.flushIB(bsw, ph, &localItemsMerged, true)
 		return nil
 	}
 
@@ -160,7 +160,7 @@ again:
 		}
 		if !bsm.ib.Add(item) {
 			// The bsm.ib is full. Flush it to bsw and continue.
-			bsm.flushIB(bsw, ph, &localItemsMerged)
+			bsm.flushIB(bsw, ph, &localItemsMerged, false)
 			continue
 		}
 		bsr.currItemIdx++
@@ -184,9 +184,10 @@ again:
 	goto again
 }
 
-func (bsm *blockStreamMerger) flushIB(bsw *blockStreamWriter, ph *partHeader, itemsMerged *uint64) {
+func (bsm *blockStreamMerger) flushIB(bsw *blockStreamWriter, ph *partHeader, itemsMerged *uint64, last bool) {
 	items := bsm.ib.items
 	data := bsm.ib.data
+	origItemsLen := len(items)
 	if len(items) == 0 {
 		// Nothing to flush.
 		return
@@ -202,6 +203,12 @@ func (bsm *blockStreamMerger) flushIB(bsw *blockStreamWriter, ph *partHeader, it
 			// Nothing to flush
 			return
 		}
+		if origItemsLen > len(items) && !last {
+			// Flush later, since prepareBlock has removed some items.
+			// This is needed to pack more items into one block and as workaround for https://github.com/VictoriaMetrics/VictoriaMetrics/pull/9312
+			return
+		}
+
 		// Consistency checks after prepareBlock call.
 		firstItem := items[0].String(data)
 		if firstItem < string(bsm.firstItem) {

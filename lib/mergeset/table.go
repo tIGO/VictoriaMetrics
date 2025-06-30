@@ -1258,6 +1258,8 @@ func (tb *Table) mergeParts(pws []*partWrapper, stopCh <-chan struct{}, isFinal 
 	dstBlocksCount := pDst.ph.blocksCount
 	dstSize := pDst.size
 
+	pwNew.p.validateOrder()
+
 	tb.swapSrcWithDstParts(pws, pwNew, dstPartType)
 
 	d := time.Since(startTime)
