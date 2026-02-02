@@ -19,6 +19,10 @@ import (
 // The cache consists of multiple shards and avoids synchronization on the read
 // path if possible to reduce contention.
 type metricIDCache struct {
+	// Contains immutable set of metricIDs. Synced with shards on rotation.
+	// Used to improve data locality.
+	curr atomic.Pointer[uint64set.Set]
+
 	shards []metricIDCacheShard
 
 	// The shards are rotated in groups, one group at a time.
@@ -51,6 +55,7 @@ func newMetricIDCache() *metricIDCache {
 		stopCh:              make(chan struct{}),
 		rotationStoppedCh:   make(chan struct{}),
 	}
+	c.curr.Store(&uint64set.Set{})
 	for i := range numShards {
 		c.shards[i].prev = &uint64set.Set{}
 		c.shards[i].next = &uint64set.Set{}
@@ -86,6 +91,10 @@ func (c *metricIDCache) Stats() metricIDCacheStats {
 }
 
 func (c *metricIDCache) Has(metricID uint64) bool {
+	if c.curr.Load().Has(metricID) {
+		// Fast path. The majority of calls must go here.
+		return true
+	}
 	shardIdx := fastHashUint64(metricID) % uint64(len(c.shards))
 	return c.shards[shardIdx].Has(metricID)
 }
@@ -96,11 +105,15 @@ func (c *metricIDCache) Set(metricID uint64) {
 }
 
 func (c *metricIDCache) rotate(rotationGroup int) {
+	next := &uint64set.Set{}
 	for i := range len(c.shards) {
+		shardCurr := c.shards[i].curr.Load()
+		next.Union(shardCurr)
 		if i/c.rotationGroupSize == rotationGroup {
 			c.shards[i].rotate()
 		}
 	}
+	c.curr.Store(next)
 }
 
 func (c *metricIDCache) startRotation() {
